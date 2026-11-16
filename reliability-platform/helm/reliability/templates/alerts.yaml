@@ -1,0 +1,19 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: reliability-alerts
+  labels: {release: monitoring}
+spec:
+  groups:
+    - name: reliability
+      rules:
+        - alert: GatewayHighErrorRate
+          expr: sum(rate(platform_http_requests_total{service="gateway",status=~"5.."}[5m])) / clamp_min(sum(rate(platform_http_requests_total{service="gateway"}[5m])), 0.001) > 0.05
+          for: 2m
+          labels: {severity: warning}
+          annotations: {summary: "Gateway 5xx rate exceeds 5%"}
+        - alert: GatewayHighLatency
+          expr: histogram_quantile(0.95, sum by (le) (rate(platform_http_request_duration_seconds_bucket{service="gateway"}[5m]))) > 0.5
+          for: 2m
+          labels: {severity: warning}
+          annotations: {summary: "Gateway p95 latency exceeds 500ms"}

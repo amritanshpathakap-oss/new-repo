@@ -1,0 +1,22 @@
+image:
+  repository: replace-with-ecr-repository
+  tag: replace-with-immutable-tag
+  pullPolicy: IfNotPresent
+host: reliability.example.com
+postgres:
+  image: postgres:16.8-alpine
+  secretName: platform-db
+  storage: 5Gi
+redis:
+  image: redis:7.4.2-alpine
+  storage: 2Gi
+otelEndpoint: http://jaeger-collector.observability.svc.cluster.local:4318/v1/traces
+inventory:
+  replicas: 2
+  faultDelayMs: 0
+  concurrency: 4
+  hpa:
+    min: 2
+    max: 6
+    cpu: 70
+prometheusAddress: http://monitoring-kube-prometheus-prometheus.observability.svc.cluster.local:9090

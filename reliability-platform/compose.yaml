@@ -1,0 +1,67 @@
+name: reliability
+x-app: &app
+  build: .
+  restart: unless-stopped
+  environment: &env
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+  depends_on:
+    jaeger: {condition: service_started}
+  healthcheck:
+    test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
+services:
+  gateway:
+    <<: *app
+    environment: {<<: *env, SERVICE: gateway}
+    ports: ["8000:8000"]
+    depends_on:
+      orders: {condition: service_healthy}
+  orders:
+    <<: *app
+    environment: {<<: *env, SERVICE: orders, DATABASE_URL: 'postgresql://platform:platform@postgres:5432/platform', REDIS_URL: 'redis://redis:6379/0'}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      inventory: {condition: service_healthy}
+  inventory:
+    <<: *app
+    environment: {<<: *env, SERVICE: inventory, FAULT_DELAY_MS: '${FAULT_DELAY_MS:-0}', INVENTORY_CONCURRENCY: '${INVENTORY_CONCURRENCY:-4}'}
+  postgres:
+    image: postgres:16.8-alpine
+    environment: {POSTGRES_USER: platform, POSTGRES_PASSWORD: platform, POSTGRES_DB: platform}
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  redis:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  jaeger:
+    image: jaegertracing/all-in-one:1.67.0
+    environment: {COLLECTOR_OTLP_ENABLED: 'true'}
+    ports: ["16686:16686"]
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment: {GF_SECURITY_ADMIN_PASSWORD: admin, GF_AUTH_ANONYMOUS_ENABLED: 'true', GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer}
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,67 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: inventory}
+spec:
+  scaleTargetRef: {apiVersion: argoproj.io/v1alpha1, kind: Rollout, name: inventory}
+  minReplicas: {{ .Values.inventory.hpa.min }}
+  maxReplicas: {{ .Values.inventory.hpa.max }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: {{ .Values.inventory.hpa.cpu }} }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata: {name: inventory-success-rate}
+spec:
+  metrics:
+    - name: success-rate
+      interval: 1m
+      count: 3
+      failureLimit: 0
+      successCondition: len(result) > 0 && result[0] >= 0.99
+      provider:
+        prometheus:
+          address: {{ .Values.prometheusAddress | quote }}
+          query: |
+            sum(rate(platform_http_requests_total{service="inventory",status!~"5.."}[2m])) / sum(rate(platform_http_requests_total{service="inventory"}[2m]))
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "5"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: {name: gateway, port: {number: 8000}}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: reliability
+  labels: {release: monitoring}
+spec:
+  selector:
+    matchLabels: {part-of: reliability}
+  endpoints:
+    - port: http
+      interval: 15s
+      path: /metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: reliability-dashboard
+  labels: {grafana_dashboard: "1"}
+data:
+  reliability.json: |
+{{ .Files.Get "dashboards/platform.json" | indent 4 }}

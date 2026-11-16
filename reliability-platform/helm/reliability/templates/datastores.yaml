@@ -1,0 +1,43 @@
+{{- range $name := list "postgres" "redis" }}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: {{ $name }} }
+spec:
+  selector: {app: {{ $name }} }
+  ports: [{name: tcp, port: {{ if eq $name "postgres" }}5432{{ else }}6379{{ end }} }]
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: {{ $name }} }
+spec:
+  serviceName: {{ $name }}
+  replicas: 1
+  selector: {matchLabels: {app: {{ $name }} }}
+  template:
+    metadata: {labels: {app: {{ $name }} }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: {{ if eq $name "postgres" }}{{ $.Values.postgres.image }}{{ else }}{{ $.Values.redis.image }}{{ end }}
+          {{- if eq $name "postgres" }}
+          env:
+            - {name: POSTGRES_USER, value: platform}
+            - {name: POSTGRES_DB, value: platform}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: {{ $.Values.postgres.secretName }}, key: password}}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "platform"]}, initialDelaySeconds: 5, periodSeconds: 5}
+          {{- else }}
+          command: ["redis-server", "--appendonly", "yes"]
+          readinessProbe: {exec: {command: ["redis-cli", "ping"]}, initialDelaySeconds: 5, periodSeconds: 5}
+          {{- end }}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {memory: 512Mi}}
+          volumeMounts:
+            - {name: data, mountPath: {{ if eq $name "postgres" }}/var/lib/postgresql/data{{ else }}/data{{ end }} }
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: {{ if eq $name "postgres" }}{{ $.Values.postgres.storage }}{{ else }}{{ $.Values.redis.storage }}{{ end }} }}
+{{- end }}
